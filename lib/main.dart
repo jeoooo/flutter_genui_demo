@@ -394,11 +394,10 @@ ${GenUiPromptFragments.basicChat}''';
         title: const Text('GenUI Flashcards'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          if (_messages.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_rounded),
-              tooltip: 'Clear chat',
-              onPressed: () {
+          IconButton(
+            icon: const Icon(Icons.delete_sweep_rounded),
+            tooltip: 'Clear chat',
+            onPressed: _messages.isEmpty ? null : () {
                 showDialog<bool>(
                   context: context,
                   builder: (ctx) => AlertDialog(
