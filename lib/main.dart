@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:genui/genui.dart';
 import 'package:genui_google_generative_ai/genui_google_generative_ai.dart';
 import 'package:json_schema_builder/json_schema_builder.dart';
@@ -233,11 +234,20 @@ class FlashCardsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'GenUI Flashcards',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
       home: const FlashCardsScreen(),
+      builder: (context, child) {
+        if (!kDebugMode) return child!;
+        return Banner(
+          message: 'DEMO',
+          location: BannerLocation.topStart,
+          child: child!,
+        );
+      },
     );
   }
 }
