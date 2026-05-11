@@ -33,5 +33,6 @@ String getApiKey() {
   if (fromDefine.isNotEmpty) return fromDefine;
 
   throw Exception(
-      'GEMINI_API_KEY is not set. Call loadEnv() at startup and ensure .env contains GEMINI_API_KEY, or run with --dart-define=GEMINI_API_KEY=YOUR_API_KEY');
+    'GEMINI_API_KEY is not set. Call loadEnv() at startup and ensure .env contains GEMINI_API_KEY, or run with --dart-define=GEMINI_API_KEY=YOUR_API_KEY',
+  );
 }

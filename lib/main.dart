@@ -1,388 +1,169 @@
-import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:genui/genui.dart';
-import 'package:genui_google_generative_ai/genui_google_generative_ai.dart';
-import 'package:json_schema_builder/json_schema_builder.dart';
-import 'package:logging/logging.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
 
+import 'widgets/quiz_catalog.dart';
 import 'utils/api_key_helper.dart';
-
-// ---------------------------------------------------------------------------
-// FlashCard CatalogItem — the custom GenUI widget the AI will generate
-// ---------------------------------------------------------------------------
-
-final _flashCardSchema = S.object(
-  properties: {
-    'front': S.string(
-      description: 'The question, term, or concept shown on the front of the card.',
-    ),
-    'back': S.string(
-      description: 'The answer, definition, or explanation revealed on the back of the card.',
-    ),
-    'topic': S.string(
-      description: 'The subject or category this flashcard belongs to (e.g. "Biology").',
-    ),
-  },
-  required: ['front', 'back'],
-);
-
-final flashCardCatalogItem = CatalogItem(
-  name: 'FlashCard',
-  dataSchema: _flashCardSchema,
-  widgetBuilder: (itemContext) {
-    final json = itemContext.data as Map<String, Object?>;
-    return _FlashCardWidget(
-      front: json['front'] as String? ?? '',
-      back: json['back'] as String? ?? '',
-      topic: json['topic'] as String? ?? '',
-    );
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Flip-card widget with 3-D rotation animation
-// ---------------------------------------------------------------------------
-
-class _FlashCardWidget extends StatefulWidget {
-  final String front;
-  final String back;
-  final String topic;
-
-  const _FlashCardWidget({
-    required this.front,
-    required this.back,
-    required this.topic,
-  });
-
-  @override
-  State<_FlashCardWidget> createState() => _FlashCardWidgetState();
-}
-
-class _FlashCardWidgetState extends State<_FlashCardWidget>
-    with SingleTickerProviderStateMixin {
-  bool _showBack = false;
-  late final AnimationController _controller;
-  late final Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 450),
-    );
-    _animation = Tween<double>(begin: 0, end: pi).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  void _flip() {
-    if (_showBack) {
-      _controller.reverse();
-    } else {
-      _controller.forward();
-    }
-    setState(() => _showBack = !_showBack);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _flip,
-      child: AnimatedBuilder(
-        animation: _animation,
-        builder: (context, _) {
-          final angle = _animation.value;
-          final isFront = angle <= pi / 2;
-
-          Widget face;
-          if (isFront) {
-            face = _buildFace(
-              context,
-              label: widget.topic.isNotEmpty ? widget.topic : 'Question',
-              content: widget.front,
-              color: Theme.of(context).colorScheme.primaryContainer,
-              textColor: Theme.of(context).colorScheme.onPrimaryContainer,
-              icon: Icons.help_outline_rounded,
-            );
-          } else {
-            face = Transform(
-              alignment: Alignment.center,
-              transform: Matrix4.identity()..rotateY(pi),
-              child: _buildFace(
-                context,
-                label: 'Answer',
-                content: widget.back,
-                color: Theme.of(context).colorScheme.secondaryContainer,
-                textColor: Theme.of(context).colorScheme.onSecondaryContainer,
-                icon: Icons.lightbulb_outline_rounded,
-              ),
-            );
-          }
-
-          return Transform(
-            alignment: Alignment.center,
-            transform: Matrix4.identity()
-              ..setEntry(3, 2, 0.001)
-              ..rotateY(angle),
-            child: face,
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildFace(
-    BuildContext context, {
-    required String label,
-    required String content,
-    required Color color,
-    required Color textColor,
-    required IconData icon,
-  }) {
-    return Container(
-      width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 160),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: textColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(icon, size: 12, color: textColor),
-                    const SizedBox(width: 4),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: textColor,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              Icon(
-                Icons.touch_app_rounded,
-                size: 16,
-                color: textColor.withValues(alpha: 0.4),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            content,
-            style: TextStyle(
-              fontSize: 17,
-              color: textColor,
-              fontWeight: FontWeight.w500,
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// App entry point
-// ---------------------------------------------------------------------------
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadEnv();
-  configureGenUiLogging(level: Level.ALL);
-  runApp(const FlashCardsApp());
+  runApp(const QuizApp());
 }
 
-class FlashCardsApp extends StatelessWidget {
-  const FlashCardsApp({super.key});
+class QuizApp extends StatelessWidget {
+  const QuizApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'GenUI Flashcards',
+      title: 'Dynamic Quiz',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const FlashCardsScreen(),
-      builder: (context, child) {
-        if (!kDebugMode) return child!;
-        return Banner(
-          message: 'DEMO',
-          location: BannerLocation.topStart,
-          child: child!,
-        );
-      },
+      home: const QuizPage(),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Main screen
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 
-class FlashCardsScreen extends StatefulWidget {
-  const FlashCardsScreen({super.key});
+class QuizPage extends StatefulWidget {
+  const QuizPage({super.key});
 
   @override
-  State<FlashCardsScreen> createState() => _FlashCardsScreenState();
+  State<QuizPage> createState() => _QuizPageState();
 }
 
-class _FlashCardsScreenState extends State<FlashCardsScreen> {
-  final _textController = TextEditingController();
-  final _scrollController = ScrollController();
-  final List<ChatMessage> _messages = [];
-
-  late GenUiConversation _genUiConversation;
-  late A2uiMessageProcessor _a2uiMessageProcessor;
-
-  static const _suggestedTopics = [
-    'The Solar System',
+class _QuizPageState extends State<QuizPage> {
+  static const _suggestions = [
     'World War II',
-    'Python Basics',
-    'Human Anatomy',
-    'Spanish Vocabulary',
-    'Climate Change',
+    'Flutter Basics',
+    'The Human Body',
+    'Solar System',
+    'Ancient Rome',
   ];
 
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+
+  Conversation? _conversation;
+  SurfaceController? _surfaceController;
+  A2uiTransportAdapter? _transport;
+
+  final List<String> _surfaceIds = [];
+
+  String? _topic;
+  bool _isLoading = false;
+  int _correct = 0;
+  int _answered = 0;
+
   @override
-  void initState() {
-    super.initState();
-    _initConversation();
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    _disposeConversation();
+    super.dispose();
   }
 
-  void _initConversation() {
-    try {
-      final catalog =
-          CoreCatalogItems.asCatalog().copyWith([flashCardCatalogItem]);
-      _a2uiMessageProcessor = A2uiMessageProcessor(catalogs: [catalog]);
+  void _disposeConversation() {
+    _conversation?.dispose();
+    _transport?.dispose();
+    _conversation = null;
+    _surfaceController = null;
+    _transport = null;
+  }
 
-      const systemInstruction = '''
-You are an expert flashcard generation assistant. When the user provides a topic or subject,
-generate a set of educational FlashCard components to help them study and memorize key concepts.
+  // ── Start / Reset ─────────────────────────────────────────────────────────
 
-Each FlashCard must have:
-- front: A clear, concise question, term, or concept for the user to recall
-- back: The precise answer, definition, or explanation (keep it brief but complete)
-- topic: The subject category (e.g. "Biology", "History", "Programming")
+  void _startQuiz(String topic) {
+    if (topic.isEmpty) return;
+    _disposeConversation();
 
-Generate between 4 and 6 flashcards per request. Present them in a Column so they stack
-vertically. Make the cards progressively increase in complexity within the set.
+    setState(() {
+      _topic = topic;
+      _isLoading = true;
+      _surfaceIds.clear();
+      _correct = 0;
+      _answered = 0;
+    });
 
-IMPORTANT: Always create a new surface with a unique surfaceId for each response.
-Never reuse or update existing surfaceIds.
+    final catalog = buildQuizCatalog(
+      onAnswered: (isCorrect) => setState(() {
+        _answered++;
+        if (isCorrect) _correct++;
+      }),
+    );
 
-${GenUiPromptFragments.basicChat}''';
+    final promptBuilder = PromptBuilder.chat(
+      catalog: catalog,
+      systemPromptFragments: [_systemFragments(topic)],
+    );
+    final systemPrompt = promptBuilder.systemPromptJoined();
 
-      final contentGenerator = GoogleGenerativeAiContentGenerator(
-        catalog: catalog,
-        systemInstruction: systemInstruction,
-        apiKey: getApiKey(),
-      );
+    final model = GenerativeModel(
+      model: 'models/gemini-2.0-flash',
+      apiKey: getApiKey(),
+      systemInstruction: Content.text(systemPrompt),
+    );
 
-      _genUiConversation = GenUiConversation(
-        a2uiMessageProcessor: _a2uiMessageProcessor,
-        contentGenerator: contentGenerator,
-        onSurfaceAdded: _onSurfaceAdded,
-        onSurfaceUpdated: _onSurfaceUpdated,
-        onTextResponse: _onTextResponse,
-        onError: (error) {
-          genUiLogger.severe(
-              'Content generator error', error.error, error.stackTrace);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('AI Error: ${error.error}')),
-            );
-          }
-        },
-      );
-    } catch (e, st) {
-      genUiLogger.severe('Initialization error', e, st);
-      if (mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Init error: $e')),
+    _surfaceController = SurfaceController(catalogs: [catalog]);
+
+    late A2uiTransportAdapter transport;
+    transport = A2uiTransportAdapter(
+      onSend: (message) async {
+        try {
+          final response = model.generateContentStream(
+            [Content.text(message.text)],
           );
-        });
+          await for (final chunk in response) {
+            transport.addChunk(chunk.text ?? '');
+          }
+        } catch (e) {
+          if (mounted) setState(() => _isLoading = false);
+          rethrow;
+        }
+      },
+    );
+    _transport = transport;
+
+    _conversation = Conversation(
+      controller: _surfaceController!,
+      transport: transport,
+    );
+
+    _conversation!.events.listen((event) {
+      if (!mounted) return;
+      switch (event) {
+        case ConversationSurfaceAdded(:final surfaceId):
+          setState(() {
+            _surfaceIds.add(surfaceId);
+            _isLoading = false;
+          });
+          _scrollToBottom();
+        case ConversationError():
+          setState(() => _isLoading = false);
+        default:
+          break;
       }
-    }
-  }
-
-  void _resetConversation() {
-    _genUiConversation.dispose();
-    setState(() {
-      _messages.clear();
-      _initConversation();
     });
+
+    _conversation!.sendRequest(
+      ChatMessage.user(
+        'Give me 5 quiz questions about: $topic. Mix the formats.',
+      ),
+    );
   }
 
-  void _onSurfaceAdded(SurfaceAdded update) {
-    if (!mounted) return;
+  void _reset() {
+    _disposeConversation();
     setState(() {
-      _messages.add(AiUiMessage(
-        definition: update.definition,
-        surfaceId: update.surfaceId,
-      ));
+      _topic = null;
+      _surfaceIds.clear();
+      _isLoading = false;
     });
-    _scrollToBottom();
-  }
-
-  void _onSurfaceUpdated(SurfaceUpdated update) {
-    if (!mounted) return;
-    setState(() {});
-    _scrollToBottom();
-  }
-
-  void _onTextResponse(String text) {
-    if (!mounted || text.trim().isEmpty) return;
-    setState(() => _messages.add(AiTextMessage.text(text)));
-    _scrollToBottom();
-  }
-
-  void _sendMessage([String? override]) {
-    final text = (override ?? _textController.text).trim();
-    if (text.isEmpty || _genUiConversation.isProcessing.value) return;
-    _textController.clear();
-
-    setState(() => _messages.add(UserMessage.text(text)));
-    _scrollToBottom();
-
-    unawaited(_genUiConversation.sendRequest(UserMessage.text(text)));
   }
 
   void _scrollToBottom() {
@@ -397,141 +178,110 @@ ${GenUiPromptFragments.basicChat}''';
     });
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('GenUI Flashcards'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_rounded),
-            tooltip: 'Clear chat',
-            onPressed: _messages.isEmpty ? null : () {
-                showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Clear flashcards?'),
-                    content: const Text(
-                      'This will reset the conversation and remove all generated flashcards.',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Cancel'),
-                      ),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Clear'),
-                      ),
-                    ],
-                  ),
-                ).then((confirmed) {
-                  if (confirmed == true) _resetConversation();
-                });
-              },
-            ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Welcome / empty state
-            if (_messages.isEmpty) _buildWelcome(context),
-
-            // Message list
-            if (_messages.isNotEmpty)
-              Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: _messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = _messages[index];
-                    return switch (msg) {
-                      AiUiMessage() => Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 6),
-                          child: GenUiSurface(
-                            key: msg.uiKey,
-                            host: _genUiConversation.host,
-                            surfaceId: msg.surfaceId,
-                          ),
-                        ),
-                      AiTextMessage() =>
-                        _ChatBubble(text: msg.text, isUser: false),
-                      UserMessage() =>
-                        _ChatBubble(text: msg.text, isUser: true),
-                      _ => const SizedBox.shrink(),
-                    };
-                  },
-                ),
-              ),
-
-            // Loading bar
-            ValueListenableBuilder<bool>(
-              valueListenable: _genUiConversation.isProcessing,
-              builder: (_, processing, _) => processing
-                  ? const LinearProgressIndicator()
-                  : const SizedBox.shrink(),
-            ),
-
-            // Input row
-            _buildInputRow(context),
-          ],
-        ),
-      ),
+      appBar: _buildAppBar(),
+      body: _topic == null ? _buildWelcome() : _buildQuiz(),
     );
   }
 
-  Widget _buildWelcome(BuildContext context) {
-    return Expanded(
+  AppBar _buildAppBar() {
+    return AppBar(
+      backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      title: _topic == null
+          ? const Text('Dynamic Quiz')
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _topic!,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                if (_answered > 0)
+                  Text(
+                    '$_correct / $_answered correct',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+              ],
+            ),
+      actions: [
+        if (_topic != null)
+          TextButton.icon(
+            onPressed: _reset,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('New Topic'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildWelcome() {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 24),
-            Icon(
-              Icons.style_rounded,
-              size: 80,
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+            CircleAvatar(
+              radius: 48,
+              backgroundColor: colors.primaryContainer,
+              child: Icon(
+                Icons.quiz_rounded,
+                size: 48,
+                color: colors.onPrimaryContainer,
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             Text(
-              'AI Flashcard Generator',
+              'Dynamic Quiz',
               style: Theme.of(context)
                   .textTheme
-                  .headlineSmall
+                  .headlineMedium
                   ?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
-              'Type any topic and I\'ll generate interactive flashcards to help you study.\nTap a card to flip it and reveal the answer!',
+              'Type any topic — Gemini generates the questions.',
+              style: TextStyle(color: Colors.grey[600]),
               textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.grey[600], height: 1.5),
             ),
-            const SizedBox(height: 28),
-            Text(
-              'Try one of these:',
-              style: Theme.of(context)
-                  .textTheme
-                  .labelMedium
-                  ?.copyWith(color: Colors.grey[500]),
+            const SizedBox(height: 32),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    decoration: const InputDecoration(
+                      hintText: 'Enter a topic…',
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: _startQuiz,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => _startQuiz(_controller.text.trim()),
+                  child: const Text('Start'),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               alignment: WrapAlignment.center,
-              children: _suggestedTopics
-                  .map((topic) => ActionChip(
-                        label: Text(topic),
-                        onPressed: () => _sendMessage(topic),
-                      ))
+              children: _suggestions
+                  .map(
+                    (t) => ActionChip(
+                      label: Text(t),
+                      onPressed: () => _startQuiz(t),
+                    ),
+                  )
                   .toList(),
             ),
           ],
@@ -540,80 +290,37 @@ ${GenUiPromptFragments.basicChat}''';
     );
   }
 
-  Widget _buildInputRow(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Row(
-        children: [
+  Widget _buildQuiz() {
+    return Column(
+      children: [
+        if (_isLoading) const LinearProgressIndicator(),
+        if (_surfaceIds.isEmpty && _isLoading)
+          const Expanded(
+            child: Center(child: Text('Generating questions…')),
+          )
+        else
           Expanded(
-            child: ValueListenableBuilder<bool>(
-              valueListenable: _genUiConversation.isProcessing,
-              builder: (_, processing, _) => TextField(
-                controller: _textController,
-                enabled: !processing,
-                decoration: const InputDecoration(
-                  hintText: 'Enter a topic for flashcards…',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.school_outlined),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(12),
+              itemCount: _surfaceIds.length,
+              itemBuilder: (context, i) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Surface(
+                  key: ValueKey(_surfaceIds[i]),
+                  surfaceContext: _surfaceController!.contextFor(_surfaceIds[i]),
                 ),
-                onSubmitted: (_) => _sendMessage(),
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            icon: const Icon(Icons.send_rounded),
-            onPressed: _sendMessage,
-          ),
-        ],
-      ),
+      ],
     );
   }
 
-  @override
-  void dispose() {
-    _textController.dispose();
-    _scrollController.dispose();
-    _genUiConversation.dispose();
-    super.dispose();
-  }
-}
+  // ── Prompt ────────────────────────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Chat bubble (for text messages)
-// ---------------------------------------------------------------------------
-
-class _ChatBubble extends StatelessWidget {
-  final String text;
-  final bool isUser;
-
-  const _ChatBubble({required this.text, required this.isUser});
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: isUser
-              ? Theme.of(context).colorScheme.primary
-              : Colors.grey[200],
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            color: isUser ? Colors.white : Colors.black87,
-            height: 1.4,
-          ),
-        ),
-      ),
-    );
-  }
+  String _systemFragments(String topic) =>
+      'You are a quiz generator for "$topic". '
+      'Output all 5 questions at once without waiting. '
+      'Keep explanations short (1 sentence). Mix difficulty.';
 }

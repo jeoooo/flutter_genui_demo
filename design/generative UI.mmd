@@ -1,0 +1,17 @@
+flowchart TB
+    G1([User types a topic]) --> G2[App asks Gemini to pick the format too]
+    G2 --> G3{{Gemini chooses UI format + content}}
+    G3 --> G4A[Multiple Choice]
+    G3 --> G4B[True or False]
+    G3 --> G4C[Fill in the Blank]
+    G3 --> G4D[Order the Steps]
+    G4A & G4B & G4C & G4D --> G5([Different card per question])
+
+    style G1 fill:#4285f4,color:#fff,stroke:#4285f4
+    style G2 fill:#f0f0f0,color:#1e1e1e,stroke:#1e1e1e
+    style G3 fill:#ea4335,color:#fff,stroke:#ea4335
+    style G4A fill:#c3ecf6,color:#1e1e1e,stroke:#57caff
+    style G4B fill:#f8d8d8,color:#1e1e1e,stroke:#ff7daf
+    style G4C fill:#ffe7a5,color:#1e1e1e,stroke:#ffd427
+    style G4D fill:#ccf6c5,color:#1e1e1e,stroke:#5cdb6d
+    style G5 fill:#34a853,color:#fff,stroke:#34a853

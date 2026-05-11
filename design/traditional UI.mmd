@@ -1,0 +1,13 @@
+flowchart TB
+    T1([User types a topic]) --> T2[App sends fixed prompt to Gemini  e.g. 'Give me 5 multiple-choice questions']
+    T2 --> T3{{Gemini fills in  question + answer content only}}
+    T3 --> T4[App parses structured JSON response]
+    T4 --> T5([Always the same card type  e.g. Multiple Choice])
+    TN[/UI layouts are predefined and static in code/] -.-> T5
+
+    style T1 fill:#bdbdbd,color:#1e1e1e,stroke:#bdbdbd
+    style T2 fill:#f0f0f0,color:#1e1e1e,stroke:#bdbdbd
+    style T3 fill:#9e9e9e,color:#fff,stroke:#9e9e9e
+    style T4 fill:#f0f0f0,color:#1e1e1e,stroke:#bdbdbd
+    style T5 fill:#bdbdbd,color:#1e1e1e,stroke:#bdbdbd
+    style TN fill:#fffde7,color:#1e1e1e,stroke:#f9a825,stroke-dasharray:5
