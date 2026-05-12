@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:genui/genui.dart';
@@ -41,16 +42,25 @@ class QuizPage extends StatefulWidget {
 }
 
 class _QuizPageState extends State<QuizPage> {
+  static const _totalQuestions = 3;
+  static const _allFormats = [
+    'MultipleChoiceCard',
+    'TrueFalseCard',
+    'FillInTheBlankCard',
+    'OrderTheStepsCard',
+    'WordBankCard',
+    'SliderCard',
+  ];
+
   static const _suggestions = [
-    'World War II',
+    'Philippines',
     'Flutter Basics',
     'The Human Body',
     'Solar System',
-    'Ancient Rome',
+    'Google',
   ];
 
   final _controller = TextEditingController();
-  final _scrollController = ScrollController();
 
   Conversation? _conversation;
   SurfaceController? _surfaceController;
@@ -60,13 +70,15 @@ class _QuizPageState extends State<QuizPage> {
 
   String? _topic;
   bool _isLoading = false;
+  int _currentIndex = 0;
+  bool _answeredCurrent = false;
+  bool _showResults = false;
   int _correct = 0;
   int _answered = 0;
 
   @override
   void dispose() {
     _controller.dispose();
-    _scrollController.dispose();
     _disposeConversation();
     super.dispose();
   }
@@ -89,20 +101,30 @@ class _QuizPageState extends State<QuizPage> {
       _topic = topic;
       _isLoading = true;
       _surfaceIds.clear();
+      _currentIndex = 0;
+      _answeredCurrent = false;
+      _showResults = false;
       _correct = 0;
       _answered = 0;
     });
 
     final catalog = buildQuizCatalog(
-      onAnswered: (isCorrect) => setState(() {
-        _answered++;
-        if (isCorrect) _correct++;
-      }),
+      onAnswered: (isCorrect) {
+        if (_answeredCurrent) return;
+        setState(() {
+          _answeredCurrent = true;
+          _answered++;
+          if (isCorrect) _correct++;
+        });
+      },
     );
+
+    final formats = [..._allFormats]..shuffle(Random());
+    final assignedFormats = formats.take(_totalQuestions).toList();
 
     final promptBuilder = PromptBuilder.chat(
       catalog: catalog,
-      systemPromptFragments: [_systemFragments(topic)],
+      systemPromptFragments: [_systemFragments(topic, assignedFormats)],
     );
     final systemPrompt = promptBuilder.systemPromptJoined();
 
@@ -130,7 +152,7 @@ class _QuizPageState extends State<QuizPage> {
               buffer.write(text);
               chunkCount++;
             }
-            // Strip markdown code fences the model sometimes adds despite instructions
+
             String fullText = buffer.toString().trim();
             if (fullText.startsWith('```')) {
               fullText = fullText
@@ -138,18 +160,33 @@ class _QuizPageState extends State<QuizPage> {
                   .replaceFirst(RegExp(r'\n?```$'), '')
                   .trim();
             }
-            // genui requires createSurface before updateComponents;
-            // inject it if the model skipped it
-            try {
-              final decoded = jsonDecode(fullText) as Map<String, dynamic>;
-              final updateData = decoded['updateComponents'];
-              if (updateData is Map && updateData['surfaceId'] is String) {
-                transport.addMessage(CreateSurface(
-                  surfaceId: updateData['surfaceId'] as String,
-                  catalogId: basicCatalogId,
-                ));
-              }
-            } catch (_) {}
+
+            // genui requires createSurface before updateComponents.
+            // Inject one for every surfaceId found in the response.
+            final surfaceIds = <String>{};
+            final regex = RegExp(r'"surfaceId"\s*:\s*"([^"]+)"');
+            for (final m in regex.allMatches(fullText)) {
+              surfaceIds.add(m.group(1)!);
+            }
+            // Fallback: try parsing a single JSON object
+            if (surfaceIds.isEmpty) {
+              try {
+                final decoded = jsonDecode(fullText) as Map<String, dynamic>;
+                final update = decoded['updateComponents'];
+                if (update is Map && update['surfaceId'] is String) {
+                  surfaceIds.add(update['surfaceId'] as String);
+                }
+              } catch (_) {}
+            }
+            for (final id in surfaceIds) {
+              transport.addMessage(
+                CreateSurface(surfaceId: id, catalogId: basicCatalogId),
+              );
+            }
+
+            // Bail out if the user navigated away and disposed this transport.
+            if (transport != _transport) return;
+
             transport.addChunk(fullText);
             AiLogger.response(chunkCount, buffer.length, fullText);
           });
@@ -173,9 +210,11 @@ class _QuizPageState extends State<QuizPage> {
         case ConversationSurfaceAdded(:final surfaceId):
           setState(() {
             _surfaceIds.add(surfaceId);
+            if (_surfaceIds.length == _totalQuestions) {
+              _surfaceIds.shuffle(Random());
+            }
             _isLoading = false;
           });
-          _scrollToBottom();
         case ConversationError():
           setState(() => _isLoading = false);
         default:
@@ -196,19 +235,23 @@ class _QuizPageState extends State<QuizPage> {
       _topic = null;
       _surfaceIds.clear();
       _isLoading = false;
+      _currentIndex = 0;
+      _answeredCurrent = false;
+      _showResults = false;
+      _correct = 0;
+      _answered = 0;
     });
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+  void _nextQuestion() {
+    if (_currentIndex >= _surfaceIds.length - 1) {
+      setState(() => _showResults = true);
+    } else {
+      setState(() {
+        _currentIndex++;
+        _answeredCurrent = false;
+      });
+    }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -234,9 +277,14 @@ class _QuizPageState extends State<QuizPage> {
                   _topic!,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                if (_answered > 0)
+                if (_showResults)
                   Text(
                     '$_correct / $_answered correct',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  )
+                else if (_surfaceIds.isNotEmpty)
+                  Text(
+                    'Question ${_currentIndex + 1} of ${_surfaceIds.length}',
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
               ],
@@ -283,6 +331,22 @@ class _QuizPageState extends State<QuizPage> {
               style: TextStyle(color: Colors.grey[600]),
               textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline_rounded, size: 14, color: Colors.grey[500]),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    'Questions and answers are AI-generated and may sometimes be inaccurate.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 32),
             Row(
               children: [
@@ -324,6 +388,8 @@ class _QuizPageState extends State<QuizPage> {
   }
 
   Widget _buildQuiz() {
+    if (_showResults) return _buildResults();
+
     return Column(
       children: [
         if (_isLoading) const LinearProgressIndicator(),
@@ -331,17 +397,35 @@ class _QuizPageState extends State<QuizPage> {
           const Expanded(
             child: Center(child: Text('Generating questions…')),
           )
-        else
+        else if (_surfaceIds.isNotEmpty)
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: _surfaceIds.length,
-              itemBuilder: (context, i) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Surface(
-                  key: ValueKey(_surfaceIds[i]),
-                  surfaceContext: _surfaceController!.contextFor(_surfaceIds[i]),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Surface(
+                key: ValueKey(_surfaceIds[_currentIndex]),
+                surfaceContext:
+                    _surfaceController!.contextFor(_surfaceIds[_currentIndex]),
+              ),
+            ),
+          ),
+        if (_surfaceIds.isNotEmpty && _answeredCurrent)
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _nextQuestion,
+                  icon: Icon(
+                    _currentIndex >= _surfaceIds.length - 1
+                        ? Icons.bar_chart_rounded
+                        : Icons.arrow_forward_rounded,
+                  ),
+                  label: Text(
+                    _currentIndex >= _surfaceIds.length - 1
+                        ? 'See Results'
+                        : 'Next Question',
+                  ),
                 ),
               ),
             ),
@@ -350,14 +434,98 @@ class _QuizPageState extends State<QuizPage> {
     );
   }
 
+  Widget _buildResults() {
+    final colors = Theme.of(context).colorScheme;
+    final total = _answered > 0 ? _answered : 1;
+    final pct = _correct / total;
+
+    final String headline;
+    final String sub;
+    final IconData icon;
+    if (pct == 1.0) {
+      headline = 'Perfect!';
+      sub = 'You nailed every question.';
+      icon = Icons.emoji_events_rounded;
+    } else if (pct >= 0.67) {
+      headline = 'Good job!';
+      sub = 'Almost there — keep it up.';
+      icon = Icons.thumb_up_rounded;
+    } else {
+      headline = 'Keep practicing!';
+      sub = 'Review the topic and try again.';
+      icon = Icons.menu_book_rounded;
+    }
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 48,
+              backgroundColor: colors.primaryContainer,
+              child: Icon(icon, size: 48, color: colors.onPrimaryContainer),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              '$_correct / $_answered',
+              style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colors.primary,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              headline,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              sub,
+              style: TextStyle(color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => _startQuiz(_topic!),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Try Again'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _reset,
+                icon: const Icon(Icons.topic_rounded),
+                label: const Text('New Topic'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── Prompt ────────────────────────────────────────────────────────────────
 
-  String _systemFragments(String topic) =>
-      'You are a quiz generator for "$topic". '
-      'Output all 3 questions at once without waiting. '
-      'Keep explanations short (1 sentence). Mix difficulty. '
-      'Every question MUST use one of these components: '
-      'MultipleChoiceCard, TrueFalseCard, FillInTheBlankCard, or OrderTheStepsCard. '
-      'Never use Column, Text, or any other generic component for questions. '
-      'Output raw JSON only — no markdown, no code fences, no backticks.';
+  String _systemFragments(String topic, List<String> formats) {
+    final assignments = List.generate(
+      formats.length,
+      (i) => 'q${i + 1} → ${formats[i]}',
+    ).join(', ');
+    return 'You are a quiz generator for "$topic". '
+        'Output exactly ${formats.length} separate JSON messages — one per question, each on its own line. '
+        'Use these exact surfaceId-to-component assignments: $assignments. '
+        'The root component IS the question card — no Column wrapper. '
+        'Format: {"version":"v0.9","updateComponents":{"surfaceId":"q1","components":[{"id":"root","component":"<TYPE>",<PROPS>}]}} '
+        'Keep explanations to 1 sentence. '
+        'Output raw JSON only — no markdown fences, no extra text before or after.';
+  }
 }
