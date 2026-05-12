@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:genui/genui.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
 import 'widgets/quiz_catalog.dart';
 import 'utils/api_key_helper.dart';
+import 'utils/logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -104,7 +107,7 @@ class _QuizPageState extends State<QuizPage> {
     final systemPrompt = promptBuilder.systemPromptJoined();
 
     final model = GenerativeModel(
-      model: 'models/gemini-2.0-flash',
+      model: 'gemini-2.5-flash-lite',
       apiKey: getApiKey(),
       systemInstruction: Content.text(systemPrompt),
     );
@@ -114,14 +117,44 @@ class _QuizPageState extends State<QuizPage> {
     late A2uiTransportAdapter transport;
     transport = A2uiTransportAdapter(
       onSend: (message) async {
+        AiLogger.request('gemini-2.5-flash-lite', message.text);
         try {
-          final response = model.generateContentStream(
-            [Content.text(message.text)],
-          );
-          await for (final chunk in response) {
-            transport.addChunk(chunk.text ?? '');
-          }
+          await withRetry(() async {
+            final response = model.generateContentStream(
+              [Content.text(message.text)],
+            );
+            final buffer = StringBuffer();
+            int chunkCount = 0;
+            await for (final chunk in response) {
+              final text = chunk.text ?? '';
+              buffer.write(text);
+              chunkCount++;
+            }
+            // Strip markdown code fences the model sometimes adds despite instructions
+            String fullText = buffer.toString().trim();
+            if (fullText.startsWith('```')) {
+              fullText = fullText
+                  .replaceFirst(RegExp(r'^```\w*\n?'), '')
+                  .replaceFirst(RegExp(r'\n?```$'), '')
+                  .trim();
+            }
+            // genui requires createSurface before updateComponents;
+            // inject it if the model skipped it
+            try {
+              final decoded = jsonDecode(fullText) as Map<String, dynamic>;
+              final updateData = decoded['updateComponents'];
+              if (updateData is Map && updateData['surfaceId'] is String) {
+                transport.addMessage(CreateSurface(
+                  surfaceId: updateData['surfaceId'] as String,
+                  catalogId: basicCatalogId,
+                ));
+              }
+            } catch (_) {}
+            transport.addChunk(fullText);
+            AiLogger.response(chunkCount, buffer.length, fullText);
+          });
         } catch (e) {
+          AiLogger.error(e);
           if (mounted) setState(() => _isLoading = false);
           rethrow;
         }
@@ -152,7 +185,7 @@ class _QuizPageState extends State<QuizPage> {
 
     _conversation!.sendRequest(
       ChatMessage.user(
-        'Give me 5 quiz questions about: $topic. Mix the formats.',
+        'Give me 3 quiz questions about: $topic. Mix the formats.',
       ),
     );
   }
@@ -321,6 +354,10 @@ class _QuizPageState extends State<QuizPage> {
 
   String _systemFragments(String topic) =>
       'You are a quiz generator for "$topic". '
-      'Output all 5 questions at once without waiting. '
-      'Keep explanations short (1 sentence). Mix difficulty.';
+      'Output all 3 questions at once without waiting. '
+      'Keep explanations short (1 sentence). Mix difficulty. '
+      'Every question MUST use one of these components: '
+      'MultipleChoiceCard, TrueFalseCard, FillInTheBlankCard, or OrderTheStepsCard. '
+      'Never use Column, Text, or any other generic component for questions. '
+      'Output raw JSON only — no markdown, no code fences, no backticks.';
 }
