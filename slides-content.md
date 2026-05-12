@@ -77,7 +77,7 @@
 
 - User types any topic — Gemini generates questions **on the fly**
 - Questions render as **interactive widgets** — not text
-- 4 formats: Multiple Choice · True/False · Fill in the Blank · Order the Steps
+- 6 formats: Multiple Choice · True/False · Fill in the Blank · Order the Steps · Word Bank · Slider
 - Immediate feedback + explanations on reveal
 
 `[IMG PLACEHOLDER: App screenshot — mix of card types generated for "Flutter Basics"]`
@@ -188,6 +188,8 @@ Catalog buildQuizCatalog({
     trueFalseCardItem(onAnswered),
     fillInBlankCardItem(onAnswered),
     orderTheStepsCardItem(onAnswered),
+    wordBankCardItem(onAnswered),
+    sliderCardItem(onAnswered),
   ]);
 }
 ```
@@ -254,34 +256,39 @@ String _systemFragments(String topic) =>
 
 ## Slide 14 — Step 6: Listen & Render
 
-**Listen for surfaces → render with `Surface`**
+**Listen for surfaces → render one at a time with `Surface`**
 
 ```dart
 // Listen for Gemini emitting a new component
 _conversation!.events.listen((event) {
-  if (event is ConversationSurfaceAdded) {
-    setState(() => _surfaceIds.add(event.surfaceId));
+  if (event is ConversationSurfaceAdded(:final surfaceId)) {
+    setState(() => _surfaceIds.add(surfaceId));
   }
 });
 
 // Kick off the quiz
 _conversation!.sendRequest(
-  ChatMessage.user('Give me 5 quiz questions about: $topic. Mix the formats.'),
+  ChatMessage.user('Give me quiz questions about: $topic. Mix the formats.'),
 );
 ```
 
 ```dart
-// Render each surface — genui picks the right widget automatically
-ListView.builder(
-  itemCount: _surfaceIds.length,
-  itemBuilder: (context, i) => Surface(
-    key: ValueKey(_surfaceIds[i]),
-    surfaceContext: _surfaceController!.contextFor(_surfaceIds[i]),
-  ),
+// Show one card at a time — genui picks the right widget automatically
+Surface(
+  key: ValueKey(_surfaceIds[_currentIndex]),
+  surfaceContext: _surfaceController!.contextFor(_surfaceIds[_currentIndex]),
+)
+
+// After answering, a button advances to the next card
+FilledButton.icon(
+  onPressed: _nextQuestion,
+  label: Text(_currentIndex >= _surfaceIds.length - 1
+      ? 'See Results'
+      : 'Next Question'),
 )
 ```
 
-`[IMG PLACEHOLDER: App screenshot — cards appearing one by one as Gemini streams]`
+`[IMG PLACEHOLDER: App screenshot — single card shown with Next Question button]`
 
 ---
 
